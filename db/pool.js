@@ -1,17 +1,16 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
 
-// Load environment variables
 dotenv.config();
 
 const { Pool } = pg;
 
-const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
+// FIX: Added 'export' so other files can use the pool for transactions
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL, // Using the full URL is better for Neon
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
 
 pool.on('error', (err) => {
@@ -19,5 +18,4 @@ pool.on('error', (err) => {
   process.exit(-1);
 });
 
-// Export the query method
 export const query = (text, params) => pool.query(text, params);

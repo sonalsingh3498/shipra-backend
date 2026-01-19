@@ -1,91 +1,92 @@
-import { query } from '../../db/pool.js';
+import { query, pool } from '../../db/pool.js';
 
-// @desc    Create a new product
+// @desc    Create Product with Variants (Transaction)
 // @route   POST /api/products
-// @access  Public (or Protected if you add auth later)
 export const createProduct = async (req, res) => {
-  // 1. Destructure data from the request body
-  const {
-    handle,
-    title,
-    vendor,
-    product_category,
-    product_type,
-    tags,           // Assuming this is an Array or String
-    published,      // Boolean
-    status,
-    seo_title,
-    seo_description,
-    is_gift_card    // Boolean
-  } = req.body;
-
-  // 2. Validation (Optional but recommended)
-  if (!handle || !title) {
-    return res.status(400).json({ error: 'Handle and Title are required fields.' });
-  }
-
-  // 3. The SQL Query
-  const sql = `
-    INSERT INTO public.products (
-      handle, 
-      title, 
-      vendor, 
-      product_category, 
-      product_type, 
-      tags, 
-      published, 
-      status, 
-      seo_title, 
-      seo_description, 
-      is_gift_card,
-      created_at,
-      updated_at
-    ) 
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW()) 
-    RETURNING *;
-  `;
-
-  // 4. The Values Array (Matches the $1, $2... order)
-  const values = [
-    handle,
-    title,
-    vendor,
-    product_category,
-    product_type,
-    tags,
-    published || false,    // Default to false if missing
-    status || 'active',    // Default to 'active' if missing
-    seo_title,
-    seo_description,
-    is_gift_card || false  // Default to false if missing
-  ];
-
+  const client = await pool.connect(); // Get a dedicated client for transaction
+  
   try {
-    // 5. Execute Query
-    const result = await query(sql, values);
-    
-    // 6. Send Response (Return the created product)
+    const {
+      handle, title, vendor, product_category, product_type, tags,
+      published, status, seo_title, seo_description, is_gift_card,
+      variants // <--- Array of variants expected here
+    } = req.body;
+
+    // 1. Start Transaction
+    await client.query('BEGIN');
+
+    // 2. Insert Parent Product
+    const productSql = `
+      INSERT INTO public.products (
+        handle, title, vendor, product_category, product_type, tags, 
+        published, status, seo_title, seo_description, is_gift_card
+      ) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) 
+      RETURNING *;
+    `;
+
+    const productValues = [
+      handle, title, vendor, product_category, product_type, tags,
+      published || false, status || 'active', seo_title, seo_description, is_gift_card || false
+    ];
+
+    const productResult = await client.query(productSql, productValues);
+    const newProduct = productResult.rows[0];
+
+    // 3. Insert Variants (if provided)
+    if (variants && variants.length > 0) {
+      const variantSql = `
+        INSERT INTO public.product_variants (
+          product_id, title, price, sku, 
+          option1_name, option1_value, 
+          option2_name, option2_value, 
+          inventory_quantity, weight
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *;
+      `;
+
+      // Loop through all variants and save them linked to the new product_id
+      for (const v of variants) {
+        await client.query(variantSql, [
+          newProduct.product_id, // Link to Parent
+          v.title,
+          v.price || 0,
+          v.sku,
+          v.option1_name || 'Color', v.option1_value,
+          v.option2_name || 'Size', v.option2_value,
+          v.inventory_quantity || 0,
+          v.weight
+        ]);
+      }
+    }
+
+    // 4. Commit Transaction (Save everything)
+    await client.query('COMMIT');
+
     res.status(201).json({
       success: true,
-      message: 'Product created successfully',
-      product: result.rows[0]
+      message: 'Product and variants created successfully',
+      product: newProduct
     });
 
   } catch (err) {
+    await client.query('ROLLBACK'); // Undo everything if error
     console.error('Error creating product:', err.message);
     
-    // Handle specific errors (like duplicate handle)
-    if (err.code === '23505') { // Postgres error code for unique violation
-        return res.status(409).json({ error: 'A product with this handle already exists.' });
+    if (err.code === '23505') {
+        return res.status(409).json({ error: 'Handle or SKU already exists.' });
     }
-
     res.status(500).json({ error: 'Server Error' });
+  } finally {
+    client.release(); // Release connection back to pool
   }
 };
+
 // @desc    Get All Products
 // @route   GET /api/products
 export const getAllProducts = async (req, res) => {
   try {
+    // We changed 'id' to 'product_id' in your schema
     const sql = 'SELECT * FROM public.products ORDER BY created_at DESC';
     const result = await query(sql);
     
@@ -95,27 +96,34 @@ export const getAllProducts = async (req, res) => {
       products: result.rows
     });
   } catch (err) {
-    console.error('Error fetching products:', err.message);
+    console.error(err.message);
     res.status(500).json({ error: 'Server Error' });
   }
 };
 
-// @desc    Get Single Product by ID
+// @desc    Get Single Product (With Variants)
 // @route   GET /api/products/:id
 export const getProductById = async (req, res) => {
-  const { id } = req.params;
+  const { id } = req.params; // This maps to product_id
 
   try {
-    const sql = 'SELECT * FROM public.products WHERE id = $1';
-    const result = await query(sql, [id]);
-
-    if (result.rows.length === 0) {
+    // 1. Get Product
+    const productRes = await query('SELECT * FROM public.products WHERE product_id = $1', [id]);
+    
+    if (productRes.rows.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    res.status(200).json({ success: true, product: result.rows[0] });
+    // 2. Get Variants for this product
+    const variantsRes = await query('SELECT * FROM public.product_variants WHERE product_id = $1', [id]);
+
+    res.status(200).json({ 
+      success: true, 
+      product: productRes.rows[0],
+      variants: variantsRes.rows
+    });
   } catch (err) {
-    console.error('Error fetching product:', err.message);
+    console.error(err.message);
     res.status(500).json({ error: 'Server Error' });
   }
 };
@@ -130,16 +138,8 @@ export const updateProduct = async (req, res) => {
   } = req.body;
 
   try {
-    // 1. Check if product exists
-    const checkSql = 'SELECT * FROM public.products WHERE id = $1';
-    const checkResult = await query(checkSql, [id]);
-    
-    if (checkResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-
-    // 2. Dynamic Update Query
-    // COALESCE($n, column_name) keeps the OLD value if the NEW value is null/undefined
+    // COALESCE allows partial updates. 
+    // IMPORTANT: 'WHERE product_id = $12' (We updated column name)
     const sql = `
       UPDATE public.products 
       SET 
@@ -155,17 +155,21 @@ export const updateProduct = async (req, res) => {
         seo_description = COALESCE($10, seo_description),
         is_gift_card = COALESCE($11, is_gift_card),
         updated_at = NOW()
-      WHERE id = $12
+      WHERE product_id = $12
       RETURNING *;
     `;
 
     const values = [
       handle, title, vendor, product_category, product_type, 
       tags, published, status, seo_title, seo_description, is_gift_card, 
-      id // The ID is the 12th parameter
+      id 
     ];
 
     const result = await query(sql, values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
 
     res.status(200).json({
       success: true,
@@ -174,7 +178,7 @@ export const updateProduct = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Error updating product:', err.message);
+    console.error(err.message);
     res.status(500).json({ error: 'Server Error' });
   }
 };
@@ -185,7 +189,8 @@ export const deleteProduct = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const sql = 'DELETE FROM public.products WHERE id = $1 RETURNING id';
+    // CASCADE DELETE ensures variants are deleted automatically
+    const sql = 'DELETE FROM public.products WHERE product_id = $1 RETURNING product_id';
     const result = await query(sql, [id]);
 
     if (result.rows.length === 0) {
@@ -194,11 +199,11 @@ export const deleteProduct = async (req, res) => {
 
     res.status(200).json({ 
       success: true, 
-      message: `Product with ID ${id} deleted` 
+      message: `Product deleted` 
     });
 
   } catch (err) {
-    console.error('Error deleting product:', err.message);
+    console.error(err.message);
     res.status(500).json({ error: 'Server Error' });
   }
 };
