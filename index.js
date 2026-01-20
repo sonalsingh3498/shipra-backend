@@ -6,6 +6,8 @@ import productRoutes from './src/routes/productRoutes.js';
 import userRoutes from './src/routes/userRoutes.js';
 import cartRoutes from './src/routes/cartRoutes.js';
 import wishlistRoutes from './src/routes/wishlistRoutes.js';
+import addressRouter from './src/routes/addressRouter.js';
+import categoryRoutes from './src/routes/categoryRoutes.js';
 dotenv.config();
 
 const app = express();
@@ -20,6 +22,8 @@ app.use('/api/products', productRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/wishlist', wishlistRoutes);
+app.use('/api/address', addressRouter);
+app.use('/api/categories', categoryRoutes);
 // 1. Health Check
 app.get('/', (req, res) => {
   res.json({ message: 'Myntra Clone API is running with ES6!' });

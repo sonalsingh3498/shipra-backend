@@ -1,84 +1,76 @@
 import { query } from '../../db/pool.js';
 
-// @desc    Add Item to Wishlist
+// @desc    Add Product to Wishlist
 // @route   POST /api/wishlist
 export const addToWishlist = async (req, res) => {
-  const { variant_id } = req.body;
-  const userId = req.user.id; // From middleware
+  const { product_id } = req.body;
+  const userId = req.user.id; 
 
   try {
-    // 1. Check if variant exists
-    const variantCheck = await query(
-      "SELECT * FROM product_variants WHERE variant_id = $1", 
-      [variant_id]
+    // 1. Check if product exists
+    const productCheck = await query(
+      "SELECT product_id FROM public.products WHERE product_id = $1", 
+      [product_id]
     );
 
-    if (variantCheck.rows.length === 0) {
-      return res.status(404).json({ error: "Product variant not found" });
+    if (productCheck.rows.length === 0) {
+      return res.status(404).json({ error: "Product not found" });
     }
 
-    // 2. Insert into Wishlist (Ignore duplicates)
+    // 2. Insert into Wishlist (Ignore duplicates using ON CONFLICT)
     const sql = `
-      INSERT INTO public.wishlist (user_id, variant_id)
+      INSERT INTO public.wishlist (user_id, product_id)
       VALUES ($1, $2)
-      ON CONFLICT (user_id, variant_id) DO NOTHING
+      ON CONFLICT (user_id, product_id) DO NOTHING
       RETURNING *;
     `;
 
-    const result = await query(sql, [userId, variant_id]);
+    const result = await query(sql, [userId, product_id]);
 
     if (result.rows.length === 0) {
       return res.status(200).json({ message: "Item already in wishlist" });
     }
 
     res.status(201).json({ 
+      success: true,
       message: "Added to wishlist", 
       item: result.rows[0] 
     });
 
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send("Server Error");
+    console.error('Wishlist Add Error:', err.message);
+    res.status(500).json({ error: "Server Error" });
   }
 };
 
-// @desc    Get User Wishlist
+// @desc    Get User Wishlist (Simplified JOIN)
 // @route   GET /api/wishlist
 export const getWishlist = async (req, res) => {
   const userId = req.user.id;
 
   try {
-    // Join Wishlist -> Variants -> Products to get nice details
+    // JOIN Wishlist directly to Products
     const sql = `
       SELECT 
         w.wishlist_id,
         w.created_at,
-        
-        -- Variant Details
-        v.variant_id,
-        v.price,
-
-        
-        -- Product Details
         p.product_id,
-        p.title AS product_name,
-        p.handle
-
+        p.title,
+        p.handle,
+        p.price,
+        p.status
       FROM public.wishlist w
-      JOIN public.product_variants v ON w.variant_id = v.variant_id
-      JOIN public.products p ON v.product_id = p.product_id
-      
+      JOIN public.products p ON w.product_id = p.product_id
       WHERE w.user_id = $1
       ORDER BY w.created_at DESC;
     `;
 
     const result = await query(sql, [userId]);
-
-    res.json(result.rows);
+    res.status(200).json({ success: true, wishlist: result.rows });
 
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send("Server Error");
+    console.error('Wishlist Get Error:', err.message);
+    res.status(500).json({ error: "Server Error" });
   }
 };
 
@@ -98,10 +90,10 @@ export const removeFromWishlist = async (req, res) => {
       return res.status(404).json({ error: "Item not found in wishlist" });
     }
 
-    res.json({ message: "Removed from wishlist" });
+    res.status(200).json({ success: true, message: "Removed from wishlist" });
 
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send("Server Error");
+    console.error('Wishlist Delete Error:', err.message);
+    res.status(500).json({ error: "Server Error" });
   }
 };
