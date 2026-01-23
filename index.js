@@ -8,6 +8,12 @@ import cartRoutes from './src/routes/cartRoutes.js';
 import wishlistRoutes from './src/routes/wishlistRoutes.js';
 import addressRouter from './src/routes/addressRouter.js';
 import categoryRoutes from './src/routes/categoryRoutes.js';
+import orderRouter from './src/routes/orderRouter.js';
+import contactRouter from './src/routes/contactRouter.js';
+import subcategoryRouter from './src/routes/subcategoryRouter.js';
+import productTypeRouter from './src/routes/productTypeRouter.js';
+import masterDataRouter from './src/routes/masterDataRoutes.js';
+
 dotenv.config();
 
 const app = express();
@@ -16,7 +22,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-
+app.use('/uploads', express.static('public/uploads'));
 // --- ROUTES ---
 app.use('/api/products', productRoutes);
 app.use('/api/users', userRoutes);
@@ -24,6 +30,14 @@ app.use('/api/cart', cartRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/address', addressRouter);
 app.use('/api/categories', categoryRoutes);
+app.use('/api/orders', orderRouter);
+app.use('/api/contact', contactRouter);
+app.use('/api/subcategories', subcategoryRouter);
+app.use('/api/product-types', productTypeRouter);
+app.use('/api/master', masterDataRouter);
+
+
+
 // 1. Health Check
 app.get('/', (req, res) => {
   res.json({ message: 'Myntra Clone API is running with ES6!' });
